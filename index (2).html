@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Base Tamagotchi</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/6.7.0/ethers.umd.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+  <style>
+    body {
+      background-color: #0b0f19;
+      color: #e5e7eb;
+      font-family: 'Press Start 2P', monospace;
+      text-align: center;
+      padding: 20px;
+    }
+    .game-boy {
+      background: #1e293b;
+      border: 4px solid #3b82f6;
+      border-radius: 20px;
+      max-width: 440px;
+      margin: 0 auto;
+      padding: 24px;
+      box-shadow: 0 10px 30px rgba(0, 82, 255, 0.2);
+    }
+    .screen {
+      background: #8bac0f;
+      color: #0f380f;
+      border: 4px solid #0f380f;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .pet-avatar {
+      font-size: 64px;
+      margin: 15px 0;
+      animation: bounce 1.5s infinite alternate;
+    }
+    @keyframes bounce {
+      from { transform: translateY(0); }
+      to { transform: translateY(-8px); }
+    }
+    .bar-container {
+      background: #306230;
+      border: 2px solid #0f380f;
+      height: 14px;
+      border-radius: 4px;
+      margin: 6px 0 14px 0;
+      overflow: hidden;
+    }
+    .bar-fill {
+      background: #9bbc0f;
+      height: 100%;
+      width: 0%;
+      transition: width 0.4s;
+    }
+    .stats {
+      font-size: 10px;
+      line-height: 1.6;
+      text-align: left;
+    }
+    button {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 10px;
+      background: #3b82f6;
+      color: #fff;
+      border: 3px solid #1d4ed8;
+      border-radius: 8px;
+      padding: 12px;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 10px;
+      transition: all 0.1s;
+    }
+    button:active {
+      transform: scale(0.97);
+    }
+    input {
+      font-family: 'Press Start 2P', monospace;
+      font-size: 10px;
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px;
+      margin-top: 10px;
+      background: #0f172a;
+      border: 2px solid #3b82f6;
+      color: #fff;
+      border-radius: 6px;
+    }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+
+  <div class="game-boy">
+    <h2 style="font-size: 14px; color: #60a5fa; margin-top: 0;">BASE TAMAGOTCHI</h2>
+
+    <!-- Кнопка логина -->
+    <button id="connectBtn" onclick="connectWallet()">ПОДКЛЮЧИТЬ КОШЕЛЕК</button>
+
+    <!-- Экран игры -->
+    <div id="gameView" class="hidden" style="margin-top: 20px;">
+      
+      <!-- Если питомца еще нет -->
+      <div id="mintBox" class="hidden">
+        <p style="font-size: 10px; line-height: 1.8;">У тебя еще нет питомца.<br>Дай ему имя:</p>
+        <input type="text" id="petNameInput" placeholder="ИМЯ" maxlength="15">
+        <button onclick="mintPet()">РОДИТЬ ПИТОМЦА</button>
+      </div>
+
+      <!-- Если питомец создан -->
+      <div id="petBox" class="hidden">
+        <div class="screen">
+          <div id="petAvatar" class="pet-avatar">🐣</div>
+          <div class="stats">
+            <div>ИМЯ: <span id="viewName">-</span></div>
+            <div>УРОВЕНЬ: <span id="viewLevel">1</span> (XP: <span id="viewXp">0</span>)</div>
+            <div style="margin-top: 8px;">СЫТОСТЬ: <span id="viewHungerVal">100</span>%</div>
+            <div class="bar-container">
+              <div id="hungerBar" class="bar-fill" style="width: 100%;"></div>
+            </div>
+            <div>СОСТОЯНИЕ: <span id="viewStatus">Бодрствует</span></div>
+          </div>
+        </div>
+
+        <button onclick="feedPet()">🍗 ПОКОРМИТЬ</button>
+        <button onclick="toggleSleepPet()" id="sleepBtn">💤 УЛОЖИТЬ СПАТЬ</button>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    // ВСТАВЬ АДРЕС НОВОГО КОНТРАКТА ИЗ REMIX СЮДА:
+    const CONTRACT_ADDRESS = "0x68df00593857de2d1189f38fc6f0b68949bc3e3d";
+
+    const CONTRACT_ABI = [
+      "function createPet(string _name) external",
+      "function feed() external",
+      "function toggleSleep() external",
+      "function getPet(address _owner) external view returns (string name, uint256 level, uint256 xp, uint256 hunger, bool isSleeping, uint256 ageSeconds, bool exists)"
+    ];
+
+    let provider, signer, contract, userAddress;
+
+    async function connectWallet() {
+      if (!window.ethereum) return alert("MetaMask не найден!");
+
+      try {
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: "0x2105" }]
+        });
+      } catch (e) {
+        if (e.code === 4902) {
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: "0x2105",
+              chainName: "Base",
+              nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+              rpcUrls: ["https://mainnet.base.org"],
+              blockExplorerUrls: ["https://basescan.org"]
+            }]
+          });
+        }
+      }
+
+      provider = new ethers.BrowserProvider(window.ethereum);
+      signer = await provider.getSigner();
+      userAddress = await signer.getAddress();
+      contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+
+      document.getElementById("connectBtn").innerText = userAddress.slice(0, 6) + "..." + userAddress.slice(-4);
+      document.getElementById("gameView").classList.remove("hidden");
+      
+      loadPetData();
+    }
+
+    async function loadPetData() {
+      if (!contract) return;
+      try {
+        const pet = await contract.getPet(userAddress);
+        if (!pet.exists) {
+          document.getElementById("mintBox").classList.remove("hidden");
+          document.getElementById("petBox").classList.add("hidden");
+        } else {
+          document.getElementById("mintBox").classList.add("hidden");
+          document.getElementById("petBox").classList.remove("hidden");
+
+          document.getElementById("viewName").innerText = pet.name;
+          document.getElementById("viewLevel").innerText = pet.level.toString();
+          document.getElementById("viewXp").innerText = pet.xp.toString();
+          
+          const hunger = Number(pet.hunger);
+          document.getElementById("viewHungerVal").innerText = hunger;
+          document.getElementById("hungerBar").style.width = hunger + "%";
+
+          // Меняем спрайт и статус
+          const avatar = document.getElementById("petAvatar");
+          if (pet.isSleeping) {
+            document.getElementById("viewStatus").innerText = "Спит 💤";
+            document.getElementById("sleepBtn").innerText = "⏰ РАЗБУДИТЬ";
+            avatar.innerText = "😴";
+          } else {
+            document.getElementById("viewStatus").innerText = hunger < 20 ? "Голоден! 🪫" : "Бодрствует ✨";
+            document.getElementById("sleepBtn").innerText = "💤 УЛОЖИТЬ СПАТЬ";
+            
+            // Эволюция спрайта от уровня
+            if (pet.level >= 5) avatar.innerText = "🐉";
+            else if (pet.level >= 3) avatar.innerText = "🦖";
+            else if (pet.level >= 2) avatar.innerText = "🐥";
+            else avatar.innerText = "🐣";
+          }
+        }
+      } catch (err) {
+        console.error("Ошибка обновления:", err);
+      }
+    }
+
+    async function mintPet() {
+      const name = document.getElementById("petNameInput").value.trim();
+      if (!name) return alert("Введите имя!");
+      try {
+        const tx = await contract.createPet(name);
+        await tx.wait();
+        loadPetData();
+      } catch (e) {
+        alert("Ошибка создания: " + (e.reason || e.message));
+      }
+    }
+
+    async function feedPet() {
+      try {
+        const tx = await contract.feed();
+        await tx.wait();
+        loadPetData();
+      } catch (e) {
+        alert("Не удалось покормить: " + (e.reason || e.message));
+      }
+    }
+
+    async function toggleSleepPet() {
+      try {
+        const tx = await contract.toggleSleep();
+        await tx.wait();
+        loadPetData();
+      } catch (e) {
+        alert("Ошибка действия: " + (e.reason || e.message));
+      }
+    }
+  </script>
+</body>
+</html>
